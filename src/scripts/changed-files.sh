@@ -72,20 +72,43 @@ fetch_base_target() {
 
 extract_pr_parts() {
   local pr_url="$1"
+  python3 - "$pr_url" <<'PY'
+import sys
+from urllib.parse import urlparse
 
-  if [[ "$pr_url" =~ ^https://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
-    printf '%s\n%s\n%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
-    return 0
+parsed = urlparse(sys.argv[1])
+parts = [part for part in parsed.path.split("/") if part]
+
+if parsed.scheme != "https":
+    raise SystemExit(1)
+
+if len(parts) != 4 or parts[2] != "pull" or not parts[3].isdigit():
+    raise SystemExit(1)
+
+print(parsed.netloc)
+print(parts[0])
+print(parts[1])
+print(parts[3])
+PY
+}
+
+resolve_api_url() {
+  local pr_host="$1"
+
+  if [[ -n "${GITHUB_API_URL:-}" ]]; then
+    printf '%s' "${GITHUB_API_URL}"
+  elif [[ "${pr_host}" == "github.com" ]]; then
+    printf 'https://api.github.com'
+  else
+    printf 'https://%s/api/v3' "${pr_host}"
   fi
-
-  return 1
 }
 
 github_pr_base() {
   local owner="$1"
   local repo="$2"
   local number="$3"
-  local api_url="${GITHUB_API_URL:-https://api.github.com}"
+  local api_url="$4"
 
   curl -fsSL \
     -H "Accept: application/vnd.github+json" \
@@ -142,7 +165,7 @@ match_changed_files() {
   local excluded_file="$3"
 
   python3 - "$input_file" "$matched_file" "$excluded_file" <<'PY'
-import pathlib
+import re
 import sys
 import os
 
@@ -161,11 +184,39 @@ def normalize(path):
         return path[2:]
     return path
 
-def matches(path, pattern):
-    return pathlib.PurePosixPath(normalize(path)).match(pattern)
+def compile_glob(pattern):
+    pattern = normalize(pattern)
+    regex = []
+    index = 0
+
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            if index + 1 < len(pattern) and pattern[index + 1] == "*":
+                index += 2
+                if index < len(pattern) and pattern[index] == "/":
+                    regex.append("(?:.*/)?")
+                    index += 1
+                else:
+                    regex.append(".*")
+                continue
+            regex.append("[^/]*")
+        elif char == "?":
+            regex.append("[^/]")
+        else:
+            regex.append(re.escape(char))
+        index += 1
+
+    return re.compile("^" + "".join(regex) + "$")
+
+def matches(path, compiled_patterns):
+    normalized = normalize(path)
+    return any(pattern.match(normalized) for pattern in compiled_patterns)
 
 includes = read_patterns(os.environ.get("CHANGED_FILES_INCLUDE", ""))
 excludes = read_patterns(os.environ.get("CHANGED_FILES_EXCLUDE", ""))
+compiled_includes = [compile_glob(pattern) for pattern in includes]
+compiled_excludes = [compile_glob(pattern) for pattern in excludes]
 
 with open(input_path, "r", encoding="utf-8") as fh:
     files = [line.rstrip("\n") for line in fh if line.rstrip("\n")]
@@ -174,9 +225,9 @@ matched = []
 excluded = []
 
 for file_path in files:
-    if not any(matches(file_path, pattern) for pattern in includes):
+    if not matches(file_path, compiled_includes):
         continue
-    if excludes and any(matches(file_path, pattern) for pattern in excludes):
+    if compiled_excludes and matches(file_path, compiled_excludes):
         excluded.append(normalize(file_path))
         continue
     matched.append(normalize(file_path))
@@ -200,9 +251,11 @@ main() {
   local base_sha=""
   local compare_base=""
   local compare_target=""
+  local pr_host=""
   local pr_owner=""
   local pr_repo=""
   local pr_number=""
+  local api_url=""
   local tmp_dir=""
   local all_changed_file=""
   local matched_file=""
@@ -221,12 +274,15 @@ main() {
   if [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
     if pr_parts="$(extract_pr_parts "${pr_url}")"; then
       mapfile -t parts < <(printf '%s\n' "${pr_parts}")
-      pr_owner="${parts[0]}"
-      pr_repo="${parts[1]}"
-      pr_number="${parts[2]}"
-      debug "Resolved pull request ${pr_owner}/${pr_repo}#${pr_number} from CIRCLE_PULL_REQUEST"
+      pr_host="${parts[0]}"
+      pr_owner="${parts[1]}"
+      pr_repo="${parts[2]}"
+      pr_number="${parts[3]}"
+      api_url="$(resolve_api_url "${pr_host}")"
+      debug "Resolved pull request ${pr_owner}/${pr_repo}#${pr_number} from ${pr_host}"
+      debug "Using GitHub API endpoint ${api_url}"
 
-      if pr_base="$(github_pr_base "${pr_owner}" "${pr_repo}" "${pr_number}")"; then
+      if pr_base="$(github_pr_base "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
         mapfile -t base_parts < <(printf '%s\n' "${pr_base}")
         base_ref="${base_parts[0]}"
         base_sha="${base_parts[1]}"

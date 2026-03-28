@@ -21,6 +21,8 @@ The current implementation:
 - `orb.yml`: packed URL orb file to reference from CircleCI config
 - `src/`: source files for the orb
 - `examples/config.yml`: sample usage
+- `tests/smoke.sh`: local smoke tests for the shell script behavior
+- `.circleci/config.yml`: CI checks for packing, linting, and smoke tests
 - `PLAN.md`: implementation notes and test cases
 
 ## Usage
@@ -88,11 +90,22 @@ jobs:
 | `base-branch` | conditional | string | Required when the orb cannot determine a PR base ref and `GITHUB_TOKEN` is not available |
 | `debug` | no | boolean | Print the detection path, comparison target, and matched files |
 
+Supported glob syntax:
+
+- `*` matches within a single path segment
+- `?` matches a single non-`/` character
+- `**` matches across directory boundaries
+
+Examples:
+
+- `src/**` matches `src/main.go` and `src/pkg/util/file.go`
+- `docs/**/*.md` matches Markdown files at any depth under `docs/`
+
 ## How detection works
 
 The orb uses the following resolution order:
 
-1. If both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata from GitHub and resolve the base branch from the API.
+1. If both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata from GitHub or GitHub Enterprise and resolve the base branch from the API.
 2. Otherwise, use the explicit `base-branch` parameter.
 3. Fetch the base branch from `origin` and compare it to `HEAD` with `git diff`.
 4. If no changed file matches `files` after applying `files-ignore`, call `circleci-agent step halt`.
@@ -100,6 +113,9 @@ The orb uses the following resolution order:
 The implementation intentionally does not reference `pipeline.event.*`.
 Those values are compile-time features and are not reliably available across GitHub App and GitHub OAuth project setups.
 Using `CIRCLE_PULL_REQUEST` plus `GITHUB_TOKEN` keeps the runtime path compatible across both setups.
+
+For GitHub Enterprise pull request URLs, the orb derives the default API endpoint as `https://<pull-request-host>/api/v3`.
+Set `GITHUB_API_URL` explicitly if your Enterprise instance uses a different API base URL.
 
 ## Compatibility Notes
 
@@ -136,6 +152,43 @@ The executor image must provide:
 - `python3`
 
 The orb uses `python3` to parse GitHub API JSON and apply glob matching consistently.
+
+Environment inputs used by the runtime:
+
+- `GITHUB_TOKEN`: optional, enables GitHub API pull request lookup
+- `CIRCLE_PULL_REQUEST`: optional pull request URL for GitHub.com or GitHub Enterprise
+- `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
+
+## Development
+
+`src/` is the source of truth. Do not edit `orb.yml` by hand.
+
+After changing any orb source file under `src/`, regenerate `orb.yml`:
+
+```bash
+circleci orb pack --skip-update-check src > orb.yml
+```
+
+Then run the local smoke tests:
+
+```bash
+bash tests/smoke.sh
+```
+
+Recommended local workflow:
+
+1. Edit files under `src/`
+2. Run `circleci orb pack --skip-update-check src > orb.yml`
+3. Run `bash tests/smoke.sh`
+4. Commit both the source changes and the updated `orb.yml`
+
+The CI job in `.circleci/config.yml` verifies:
+
+- `orb.yml` is up to date with `src/`
+- `src/scripts/changed-files.sh` and `tests/smoke.sh` pass `shellcheck`
+- Orb and CI YAML files pass `yamllint`
+- The smoke tests cover match, halt, ignore, rename, and validation failure paths
+- The smoke tests also cover recursive `**` matching, deleted files, and GitHub API resolution
 
 ## Why not use `gh`
 

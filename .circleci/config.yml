@@ -1,0 +1,36 @@
+version: 2.1
+
+jobs:
+  verify:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Install tooling
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y shellcheck yamllint
+            curl -fLSs https://circle.ci/cli | sudo bash
+      - run:
+          name: Verify packed orb is up to date
+          command: |
+            circleci orb pack --skip-update-check src > /tmp/orb.yml
+            diff -u orb.yml /tmp/orb.yml
+      - run:
+          name: Lint shell scripts
+          command: |
+            shellcheck src/scripts/changed-files.sh tests/smoke.sh
+      - run:
+          name: Lint YAML
+          command: |
+            yamllint .circleci/config.yml orb.yml examples/config.yml src/@orb.yml src/commands/check.yml
+      - run:
+          name: Run smoke tests
+          command: |
+            bash tests/smoke.sh
+
+workflows:
+  verify:
+    jobs:
+      - verify

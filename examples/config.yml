@@ -4,7 +4,20 @@ orbs:
   changed-files: https://raw.githubusercontent.com/<org>/<repo>/refs/heads/main/orb.yml
 
 jobs:
-  test:
+  test_with_github_api:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - changed-files/check:
+          files: |
+            cmd/**
+            internal/**
+            go.mod
+      - run:
+          name: Run tests
+          command: go test ./...
+  test_with_base_branch_fallback:
     docker:
       - image: cimg/base:stable
     steps:
@@ -22,4 +35,7 @@ jobs:
 workflows:
   test:
     jobs:
-      - test
+      - test_with_github_api:
+          context:
+            - github-token
+      - test_with_base_branch_fallback
