@@ -8,7 +8,7 @@ CircleCI URL orb that skips jobs when pull requests do not touch matching files.
 version: 2.1
 
 orbs:
-  changed-files: https://raw.githubusercontent.com/<org>/<repo>/refs/heads/main/orb.yml
+  changed-files: https://raw.githubusercontent.com/f440/change-files-orb/refs/heads/main/orb.yml
 
 jobs:
   test:
@@ -37,7 +37,7 @@ Use `base-branch` when you want to skip GitHub API lookup and compare directly a
 version: 2.1
 
 orbs:
-  changed-files: https://raw.githubusercontent.com/<org>/<repo>/refs/heads/main/orb.yml
+  changed-files: https://raw.githubusercontent.com/f440/change-files-orb/refs/heads/main/orb.yml
 
 jobs:
   test:
