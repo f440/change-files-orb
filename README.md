@@ -1,32 +1,8 @@
 # changed-files Orb
 
-CircleCI Orb for skipping expensive steps when a pull request does not touch the files you care about.
+CircleCI URL orb that skips jobs when pull requests do not touch matching files.
 
-This orb is implemented as a URL orb under `orb.yml`.
-
-## Goal
-
-On GitHub pull request pipelines, detect whether relevant files changed.
-If no matching files changed, the orb marks the step as successful and stops the rest of the job with `circleci-agent step halt`.
-
-The current implementation:
-
-- Prefers `base-branch` when it is explicitly set
-- Uses `GITHUB_TOKEN` to query GitHub pull request metadata only when `base-branch` is not set
-- Uses local `git diff` for the actual file detection in every successful path
-- Uses `!pattern` inside `files` for exclusions
-- Falls back to continuing the job when it cannot determine a trustworthy diff
-
-## Files
-
-- `orb.yml`: packed URL orb file to reference from CircleCI config
-- `src/`: source files for the orb
-- `examples/config.yml`: sample usage
-- `tests/smoke.sh`: local smoke tests for the shell script behavior
-- `.circleci/config.yml`: CI checks for packing, linting, and smoke tests
-- `PLAN.md`: implementation notes and accepted behavior
-
-## Usage
+## Quick Start
 
 ```yaml
 version: 2.1
@@ -55,9 +31,7 @@ workflows:
       - test
 ```
 
-### Explicit base branch fallback
-
-Use this when `GITHUB_TOKEN` is not available, or when you want to force base branch lookup from local git state.
+Use `base-branch` when you want to skip GitHub API lookup and compare directly against a known branch:
 
 ```yaml
 version: 2.1
@@ -81,6 +55,8 @@ jobs:
           command: make test
 ```
 
+For a fuller example, see [examples/config.yml](/home/f440/go/src/github.com/circleci-orbs/examples/config.yml).
+
 ## Parameters
 
 | Parameter | Required | Type | Description |
@@ -89,7 +65,7 @@ jobs:
 | `base-branch` | no | string | Explicit base branch to diff against. When set, GitHub API lookup is skipped. |
 | `debug` | no | boolean | Print the detection path, comparison target, raw changed files, and parsed patterns. |
 
-Supported glob syntax follows Git pathspec `glob` behavior.
+`files` follows Git pathspec `glob` behavior.
 
 Examples:
 
@@ -97,11 +73,11 @@ Examples:
 - `docs/**/*.md` matches Markdown files at any depth under `docs/`
 - `!docs/generated/**` excludes generated content from an otherwise broader include
 
-## How detection works
+## How It Works
 
-The orb uses the following resolution order:
+Resolution order:
 
-1. If `base-branch` is explicitly set, skip GitHub API lookup and use local `git diff`.
+1. If `base-branch` is set, skip GitHub API lookup and use local `git diff`.
 2. Otherwise, if both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch pull request metadata from GitHub or GitHub Enterprise.
 3. Fetch and deepen the base branch as needed, then compare it to `HEAD` with `git diff --no-renames --diff-filter=AM`.
 4. Apply the include and exclude patterns directly through Git pathspecs.
@@ -114,37 +90,8 @@ Important behavior:
 - Renames are treated as delete + add because the diff uses `--no-renames`.
 - If the orb cannot determine a trustworthy diff, it logs why and continues the job instead of halting it.
 
-The implementation intentionally does not reference `pipeline.event.*`.
-Those values are compile-time features and are not reliably available across GitHub App and GitHub OAuth project setups.
-Using `CIRCLE_PULL_REQUEST` plus `GITHUB_TOKEN` keeps the runtime path compatible across both setups.
-
 For GitHub Enterprise pull request URLs, the orb derives the default API endpoint as `https://<pull-request-host>/api/v3`.
 Set `GITHUB_API_URL` explicitly if your Enterprise instance uses a different API base URL.
-
-## Compatibility Notes
-
-The tricky part is not GitHub itself, but how the CircleCI project is installed and configured.
-
-### GitHub App pipeline
-
-GitHub App projects may expose pull request pipeline values like `pipeline.event.github.pull_request.base.ref`.
-This orb does not rely on them, because directly referencing those values can break on projects that are not truly running as GitHub App pipelines.
-
-### GitHub OAuth pipeline
-
-On GitHub OAuth pipelines, expect to rely on:
-
-- `CIRCLE_PULL_REQUEST` for the PR URL
-- `GITHUB_TOKEN` for GitHub REST API access
-- `base-branch` as an explicit fallback
-
-Installing the CircleCI GitHub App is not enough by itself. The project must actually be configured and running as a GitHub App pipeline for the GitHub App-specific pipeline values to be present.
-
-Useful references:
-
-- https://discuss.circleci.com/t/documentation-on-github-app-events-not-working/53407
-- https://circleci.com/docs/guides/integration/using-the-circleci-github-app-in-an-oauth-org/
-- https://circleci.com/docs/reference/variables/
 
 ## Runtime Requirements
 
@@ -170,9 +117,54 @@ Environment inputs used by the runtime:
 
 If `base-branch` is set, these API-related variables and tool requirements are ignored for diff target resolution.
 
+## Compatibility Notes
+
+The implementation intentionally does not reference `pipeline.event.*`.
+Those values are compile-time features and are not reliably available across GitHub App and GitHub OAuth project setups.
+Using `CIRCLE_PULL_REQUEST` plus `GITHUB_TOKEN` keeps the runtime path compatible across both setups.
+
+### GitHub App pipeline
+
+GitHub App projects may expose pull request pipeline values like `pipeline.event.github.pull_request.base.ref`.
+This orb does not rely on them, because directly referencing those values can break on projects that are not truly running as GitHub App pipelines.
+
+### GitHub OAuth pipeline
+
+On GitHub OAuth pipelines, expect to rely on:
+
+- `CIRCLE_PULL_REQUEST` for the PR URL
+- `GITHUB_TOKEN` for GitHub REST API access
+- `base-branch` as an explicit fallback
+
+Installing the CircleCI GitHub App is not enough by itself. The project must actually be configured and running as a GitHub App pipeline for the GitHub App-specific pipeline values to be present.
+
+Useful references:
+
+- https://discuss.circleci.com/t/documentation-on-github-app-events-not-working/53407
+- https://circleci.com/docs/guides/integration/using-the-circleci-github-app-in-an-oauth-org/
+- https://circleci.com/docs/reference/variables/
+
+## Operational Caveat
+
+`circleci-agent step halt` stops the rest of the job after the current step finishes.
+Because of that, `changed-files/check` should be used in its own dedicated step before expensive test or build steps.
+
+Reference:
+
+- https://circleci.com/docs/guides/test/rerun-failed-tests/
+
 ## Development
 
 `src/` is the source of truth. Do not edit `orb.yml` by hand.
+
+Repo layout:
+
+- `orb.yml`: packed URL orb file to reference from CircleCI config
+- `src/`: source files for the orb
+- `examples/config.yml`: sample usage
+- `tests/smoke.sh`: local smoke tests for the shell script behavior
+- `.circleci/config.yml`: CI checks for packing, linting, and smoke tests
+- `PLAN.md`: implementation notes and accepted behavior
 
 After changing any orb source file under `src/`, regenerate `orb.yml`:
 
@@ -200,15 +192,13 @@ The CI job in `.circleci/config.yml` verifies:
 - Orb and CI YAML files pass `yamllint`
 - The smoke tests cover include and exclude matching, rename behavior, deleted files, API metadata lookup, shallow history, fail-open cases, and validation failures
 
-## Why not use `gh`
+## Design Notes
 
 The implementation intentionally avoids depending on GitHub CLI.
 
 - It adds an extra runtime dependency to every executor image
 - The needed data can be obtained from `CIRCLE_PULL_REQUEST`, GitHub REST API metadata, and `git diff`
 - `curl`, `jq`, and the existing Git toolchain are enough for the current behavior
-
-## Scope and Non-goals
 
 Current scope:
 
@@ -227,12 +217,3 @@ Current non-goals:
 Reference inspiration:
 
 - https://github.com/tj-actions/changed-files
-
-## Operational Caveat
-
-`circleci-agent step halt` stops the rest of the job after the current step finishes.
-Because of that, `changed-files/check` should be used in its own dedicated step before expensive test or build steps.
-
-Reference:
-
-- https://circleci.com/docs/guides/test/rerun-failed-tests/
