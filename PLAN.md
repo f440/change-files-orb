@@ -8,7 +8,7 @@ The orb must:
 
 - Prefer an explicit `base-branch` when provided
 - Avoid a `gh` CLI dependency
-- Fall back to `git diff` when API-based detection is unavailable
+- Use `git diff` only when `base-branch` is explicitly provided
 - Fail fast when it cannot determine a safe comparison target
 
 ## Public Interface

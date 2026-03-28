@@ -14,8 +14,8 @@ The current implementation:
 - Prefers `base-branch` when it is explicitly set
 - Uses `GITHUB_TOKEN` to query GitHub pull request metadata only when `base-branch` is not set
 - Avoids requiring `gh` CLI
-- Falls back to `git diff` when API-based metadata is unavailable
-- Requires the caller to provide a base branch when neither API access nor PR metadata is available
+- Uses `git diff` only when `base-branch` is explicitly set
+- Fails if neither explicit `base-branch` nor GitHub API-based pull request metadata is available
 
 ## Files
 
