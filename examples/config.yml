@@ -1,0 +1,25 @@
+version: 2.1
+
+orbs:
+  changed-files: https://raw.githubusercontent.com/<org>/<repo>/refs/heads/main/orb.yml
+
+jobs:
+  test:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - changed-files/check:
+          base-branch: main
+          files: |
+            cmd/**
+            internal/**
+            go.mod
+      - run:
+          name: Run tests
+          command: go test ./...
+
+workflows:
+  test:
+    jobs:
+      - test

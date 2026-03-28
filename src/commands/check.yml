@@ -1,0 +1,33 @@
+description: |
+  Detect changed files for a GitHub pull request and halt the job when no matching files changed.
+
+parameters:
+  files:
+    type: string
+    description: |
+      Newline-delimited include globs evaluated from the repository root.
+  files-ignore:
+    type: string
+    default: ""
+    description: |
+      Newline-delimited exclude globs evaluated from the repository root.
+  base-branch:
+    type: string
+    default: ""
+    description: |
+      Explicit base branch to diff against when GitHub API lookup is unavailable.
+  debug:
+    type: boolean
+    default: false
+    description: |
+      Print the detection strategy, comparison target, and matching details.
+
+steps:
+  - run:
+      name: Check changed files
+      environment:
+        CHANGED_FILES_INCLUDE: << parameters.files >>
+        CHANGED_FILES_EXCLUDE: << parameters.files-ignore >>
+        CHANGED_FILES_BASE_BRANCH: << parameters.base-branch >>
+        CHANGED_FILES_DEBUG: << parameters.debug >>
+      command: <<include(scripts/changed-files.sh)>>
