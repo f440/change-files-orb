@@ -11,7 +11,8 @@ If no matching files changed, the orb marks the step as successful and stops the
 
 The current implementation:
 
-- Uses `GITHUB_TOKEN` when available to query GitHub pull request metadata via the REST API
+- Prefers `base-branch` when it is explicitly set
+- Uses `GITHUB_TOKEN` to query GitHub pull request metadata only when `base-branch` is not set
 - Avoids requiring `gh` CLI
 - Falls back to `git diff` when API-based metadata is unavailable
 - Requires the caller to provide a base branch when neither API access nor PR metadata is available
@@ -56,7 +57,7 @@ workflows:
 
 ### Explicit base branch fallback
 
-Use this when `GITHUB_TOKEN` is not available or when you want deterministic `git diff` behavior.
+Use this when `GITHUB_TOKEN` is not available, or when you want to force local `git diff` instead of GitHub API lookup.
 
 ```yaml
 version: 2.1
@@ -105,9 +106,9 @@ Examples:
 
 The orb uses the following resolution order:
 
-1. If both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata and changed files from GitHub or GitHub Enterprise.
-2. Otherwise, use the explicit `base-branch` parameter.
-3. On the fallback path, fetch the base branch from `origin`, deepen shallow history if needed, and compare it to `HEAD` with `git diff`.
+1. If `base-branch` is explicitly set, use local `git diff`.
+2. Otherwise, if both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata and changed files from GitHub or GitHub Enterprise.
+3. On the `git diff` path, fetch the base branch from `origin`, deepen shallow history if needed, and compare it to `HEAD`.
 4. If no changed file matches `files` after applying `files-ignore`, call `circleci-agent step halt`.
 
 The implementation intentionally does not reference `pipeline.event.*`.
@@ -159,6 +160,8 @@ Environment inputs used by the runtime:
 - `GITHUB_TOKEN`: optional, enables GitHub API pull request lookup
 - `CIRCLE_PULL_REQUEST`: optional pull request URL for GitHub.com or GitHub Enterprise
 - `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
+
+If `base-branch` is set, these API-related variables are ignored for file detection.
 
 ## Development
 

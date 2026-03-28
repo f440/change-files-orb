@@ -354,7 +354,11 @@ main() {
     die "Parameter 'files' must contain at least one include pattern."
   fi
 
-  if [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
+  if [[ -n "${base_branch}" ]]; then
+    base_ref="${base_branch}"
+    strategy="git-diff"
+    debug "Using explicit base branch '${base_branch}'; skipping GitHub API lookup"
+  elif [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
     if pr_parts="$(extract_pr_parts "${pr_url}")"; then
       mapfile -t parts < <(printf '%s\n' "${pr_parts}")
       pr_host="${parts[0]}"
@@ -385,10 +389,7 @@ main() {
   fi
 
   if [[ -z "${strategy}" ]]; then
-    if [[ -n "${base_branch}" ]]; then
-      base_ref="${base_branch}"
-      strategy="git-diff"
-    elif is_true "${api_lookup_failed}"; then
+    if is_true "${api_lookup_failed}"; then
       die "GitHub API lookup failed and no 'base-branch' parameter was provided."
     else
       die "Unable to determine a pull request base branch. Provide GITHUB_TOKEN with CIRCLE_PULL_REQUEST, or set the 'base-branch' parameter."

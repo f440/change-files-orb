@@ -6,7 +6,7 @@ Implement a URL orb for GitHub pull request pipelines that skips the rest of a j
 
 The orb must:
 
-- Prefer GitHub REST API when available
+- Prefer an explicit `base-branch` when provided
 - Avoid a `gh` CLI dependency
 - Fall back to `git diff` when API-based detection is unavailable
 - Fail fast when it cannot determine a safe comparison target
@@ -55,13 +55,29 @@ The orb must:
 
 Use this priority order:
 
-1. GitHub REST API with `GITHUB_TOKEN`
-2. `git diff` using explicit `base-branch`
+1. `git diff` using explicit `base-branch`
+2. GitHub REST API with `GITHUB_TOKEN`
 
-### Strategy 1: GitHub REST API
+### Strategy 1: `git diff`
 
 Use this path when:
 
+- `base-branch` is provided explicitly
+
+Implementation decisions:
+
+- Skip GitHub API lookup entirely when `base-branch` is set
+- Fetch the base branch if needed
+- Deepen or unshallow the checkout if needed until a merge base exists, otherwise fail clearly
+- Compare `origin/<base-branch>...HEAD`
+- Treat all changed file paths from the diff as candidates for glob matching
+- For rename and copy entries, include both old and new paths in matching so path moves do not hide relevant changes
+
+### Strategy 2: GitHub REST API
+
+Use this path when:
+
+- `base-branch` is not provided
 - `GITHUB_TOKEN` is available
 - `CIRCLE_PULL_REQUEST` is available
 
@@ -72,23 +88,7 @@ Implementation decisions:
 - Query the pull request files API and use the API-provided changed file list directly
 - Resolve the PR base branch from the API response for logging and fallback
 - For GitHub Enterprise URLs, default the API base URL to `https://<pull-request-host>/api/v3` unless `GITHUB_API_URL` is set
-- If API calls fail and `base-branch` is provided, fall back to `git diff`
-- If API calls fail and no fallback exists, fail the step
-
-### Strategy 2: `git diff`
-
-Use this path when:
-
-- API access is unavailable or intentionally not used
-- `base-branch` is provided explicitly
-
-Implementation decisions:
-
-- Fetch the base branch if needed
-- Deepen or unshallow the checkout if needed until a merge base exists, otherwise fail clearly
-- Compare `origin/<base-branch>...HEAD`
-- Treat all changed file paths from the diff as candidates for glob matching
-- For rename and copy entries, include both old and new paths in matching so path moves do not hide relevant changes
+- If API calls fail, fail the step because this strategy only runs when `base-branch` is not provided
 
 ### File matching rules
 
@@ -153,6 +153,7 @@ Rationale:
 
 ### Functional scenarios
 
+- Explicit `base-branch` takes precedence over GitHub API inputs
 - OAuth-style PR context plus `GITHUB_TOKEN` allows API-based detection
 - GitHub App pipeline with `CIRCLE_PULL_REQUEST` plus `GITHUB_TOKEN` allows API-based detection
 - GitHub Enterprise PR URLs resolve the correct API endpoint

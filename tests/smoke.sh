@@ -242,6 +242,34 @@ EOF
   assert_contains "$(cat "${curl_log}")" "https://ghe.example.com/api/v3/repos/acme/widgets/pulls/42"
 }
 
+test_explicit_base_branch_skips_github_api() {
+  local repo output content curl_log
+
+  repo="$(clone_feature_repo prefer-git-case)"
+  (
+    cd "${repo}"
+    printf 'func main() {}\n' >> src/main.go
+    git add src/main.go
+    git commit -m prefer-git >/dev/null
+  )
+
+  curl_log="${TEST_ROOT}/prefer-git-curl.log"
+  output="${TEST_ROOT}/prefer-git.out"
+  run_orb_script "${repo}" 'src/**' "" "main" "${output}" \
+    "GITHUB_TOKEN=test-token" \
+    "CIRCLE_PULL_REQUEST=https://ghe.example.com/acme/widgets/pull/42" \
+    "TEST_CURL_LOG=${curl_log}" \
+    "TEST_FAKE_CURL_EXIT_CODE=22"
+
+  content="$(cat "${output}")"
+  assert_contains "${content}" "Strategy: git-diff"
+  assert_contains "${content}" "src/main.go"
+
+  if [[ -e "${curl_log}" && -s "${curl_log}" ]]; then
+    fail "Expected no GitHub API calls when base-branch is set, but curl was invoked."
+  fi
+}
+
 test_missing_pr_context_and_base_branch_fails() {
   local repo output status content
 
@@ -421,6 +449,8 @@ EOF
   test_deleted_file_matches
   log "Running GitHub API case"
   test_github_api_strategy_supports_enterprise_pr_urls
+  log "Running explicit base-branch precedence case"
+  test_explicit_base_branch_skips_github_api
   log "Running missing PR context case"
   test_missing_pr_context_and_base_branch_fails
   log "Running API failure case"
