@@ -63,6 +63,7 @@ For a fuller example, see [examples/config.yml](/home/f440/go/src/github.com/cir
 | --- | --- | --- | --- |
 | `files` | yes | string | Newline-delimited globs evaluated from the repository root. Prefix a pattern with `!` to exclude it. |
 | `base-branch` | no | string | Explicit base branch to diff against. When set, GitHub API lookup is skipped. |
+| `github-token-env-var` | no | env_var_name | Environment variable that contains the GitHub token used for pull request metadata lookup. Defaults to `GITHUB_TOKEN`. |
 | `debug` | no | boolean | Print the detection path, comparison target, raw changed files, and parsed patterns. |
 
 `files` follows Git pathspec `glob` behavior.
@@ -116,6 +117,7 @@ Environment inputs used by the runtime:
 - `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
 
 If `base-branch` is set, these API-related variables and tool requirements are ignored for diff target resolution.
+`github-token-env-var` controls which environment variable is read for the token, and defaults to `GITHUB_TOKEN`.
 
 ## Compatibility Notes
 
