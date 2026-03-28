@@ -45,15 +45,22 @@ jobs:
       - image: cimg/base:current
     steps:
       - checkout
-      - changed-files/check:
-          base-branch: main
-          files: |
-            src/**
-            tests/**
+      - when:
+          condition:
+            not:
+              equal: [ main, << pipeline.git.branch >> ]
+          steps:
+            - changed-files/check:
+                base-branch: develop
+                files: |
+                  src/**
+                  tests/**
       - run:
           name: Run tests
           command: make test
 ```
+
+This pattern is useful when feature branches usually target `develop`, but commits that run on `main` should always execute the full test suite.
 
 For a fuller example, see [examples/config.yml](/home/f440/go/src/github.com/circleci-orbs/examples/config.yml).
 

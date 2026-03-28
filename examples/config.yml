@@ -17,16 +17,21 @@ jobs:
       - run:
           name: Run tests
           command: make test
-  test_with_base_branch_fallback:
+  test_with_main_full_test:
     docker:
       - image: cimg/base:current
     steps:
       - checkout
-      - changed-files/check:
-          base-branch: main
-          files: |
-            src/**
-            tests/**
+      - when:
+          condition:
+            not:
+              equal: [ main, << pipeline.git.branch >> ]
+          steps:
+            - changed-files/check:
+                base-branch: develop
+                files: |
+                  src/**
+                  tests/**
       - run:
           name: Run tests
           command: make test
@@ -37,4 +42,4 @@ workflows:
       - test_with_github_api:
           context:
             - github-token
-      - test_with_base_branch_fallback
+      - test_with_main_full_test
