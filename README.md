@@ -36,17 +36,17 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/python:3.12
     steps:
       - checkout
       - changed-files/check:
           files: |
             src/**
-            go.mod
-            go.sum
+            tests/**
+            pyproject.toml
       - run:
           name: Run tests
-          command: go test ./...
+          command: python -m unittest discover
 
 workflows:
   test:
@@ -67,18 +67,18 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/python:3.12
     steps:
       - checkout
       - changed-files/check:
           base-branch: main
           files: |
-            cmd/**
-            internal/**
-            go.mod
+            src/**
+            tests/**
+            pyproject.toml
       - run:
           name: Run tests
-          command: go test ./...
+          command: python -m unittest discover
 ```
 
 ## Parameters
@@ -105,9 +105,9 @@ Examples:
 
 The orb uses the following resolution order:
 
-1. If both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata from GitHub or GitHub Enterprise and resolve the base branch from the API.
+1. If both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata and changed files from GitHub or GitHub Enterprise.
 2. Otherwise, use the explicit `base-branch` parameter.
-3. Fetch the base branch from `origin` and compare it to `HEAD` with `git diff`.
+3. On the fallback path, fetch the base branch from `origin`, deepen shallow history if needed, and compare it to `HEAD` with `git diff`.
 4. If no changed file matches `files` after applying `files-ignore`, call `circleci-agent step halt`.
 
 The implementation intentionally does not reference `pipeline.event.*`.
@@ -152,6 +152,7 @@ The executor image must provide:
 - `python3`
 
 The orb uses `python3` to parse GitHub API JSON and apply glob matching consistently.
+The examples above use `cimg/python` so the sample `python -m unittest` command and the orb runtime requirements are both satisfied.
 
 Environment inputs used by the runtime:
 
@@ -188,7 +189,7 @@ The CI job in `.circleci/config.yml` verifies:
 - `src/scripts/changed-files.sh` and `tests/smoke.sh` pass `shellcheck`
 - Orb and CI YAML files pass `yamllint`
 - The smoke tests cover match, halt, ignore, rename, and validation failure paths
-- The smoke tests also cover recursive `**` matching, deleted files, and GitHub API resolution
+- The smoke tests also cover recursive `**` matching, deleted files, GitHub API resolution, shallow history, and failure paths for missing PR context, API failure, and invalid base branches
 
 ## Why not use `gh`
 

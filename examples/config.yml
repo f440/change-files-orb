@@ -6,31 +6,31 @@ orbs:
 jobs:
   test_with_github_api:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/python:3.12
     steps:
       - checkout
       - changed-files/check:
           files: |
-            cmd/**
-            internal/**
-            go.mod
+            src/**
+            tests/**
+            pyproject.toml
       - run:
           name: Run tests
-          command: go test ./...
+          command: python -m unittest discover
   test_with_base_branch_fallback:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/python:3.12
     steps:
       - checkout
       - changed-files/check:
           base-branch: main
           files: |
-            cmd/**
-            internal/**
-            go.mod
+            src/**
+            tests/**
+            pyproject.toml
       - run:
           name: Run tests
-          command: go test ./...
+          command: python -m unittest discover
 
 workflows:
   test:

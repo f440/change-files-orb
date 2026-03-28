@@ -69,7 +69,8 @@ Implementation decisions:
 
 - Extract the host, owner, repo, and pull request number from `CIRCLE_PULL_REQUEST`
 - Query GitHub REST API for pull request metadata
-- Resolve the PR base branch from the API response
+- Query the pull request files API and use the API-provided changed file list directly
+- Resolve the PR base branch from the API response for logging and fallback
 - For GitHub Enterprise URLs, default the API base URL to `https://<pull-request-host>/api/v3` unless `GITHUB_API_URL` is set
 - If API calls fail and `base-branch` is provided, fall back to `git diff`
 - If API calls fail and no fallback exists, fail the step
@@ -84,6 +85,7 @@ Use this path when:
 Implementation decisions:
 
 - Fetch the base branch if needed
+- Deepen or unshallow the checkout if needed until a merge base exists, otherwise fail clearly
 - Compare `origin/<base-branch>...HEAD`
 - Treat all changed file paths from the diff as candidates for glob matching
 - For rename and copy entries, include both old and new paths in matching so path moves do not hide relevant changes
@@ -166,6 +168,7 @@ Rationale:
 - API call fails and no fallback is available
 - Empty `files`
 - Invalid or unreachable base branch for `git diff`
+- Shallow history with no merge base until additional fetches are performed
 
 ### Documentation checks
 
@@ -184,7 +187,7 @@ Rationale:
 
 - Orb YAML defines the command parameters and invokes the shell script
 - Shell script detects context, fetches changed files, applies glob filters, and decides halt vs continue
-- Example config demonstrates both token-based and explicit-base-branch usage
+- Example config demonstrates both token-based and explicit-base-branch usage with an executor that satisfies the documented runtime needs
 
 ### Closed decisions for v1
 

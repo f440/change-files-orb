@@ -103,6 +103,32 @@ commands:
                       return 1
                     }
 
+                    resolve_compare_target() {
+                      local compare_base="$1"
+                      local deepen_attempt=0
+                      local max_deepen_attempts=4
+
+                      while ! git merge-base "${compare_base}" HEAD >/dev/null 2>&1; do
+                        if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" != "true" ]]; then
+                          return 1
+                        fi
+
+                        if (( deepen_attempt < max_deepen_attempts )); then
+                          debug "No merge base for ${compare_base}; deepening origin history by 256 commits"
+                          git fetch --no-tags --deepen=256 origin >/dev/null 2>&1 || return 1
+                        elif (( deepen_attempt == max_deepen_attempts )); then
+                          debug "No merge base after ${max_deepen_attempts} deepen attempts; fetching full origin history"
+                          git fetch --no-tags --unshallow origin >/dev/null 2>&1 || return 1
+                        else
+                          return 1
+                        fi
+
+                        deepen_attempt=$((deepen_attempt + 1))
+                      done
+
+                      printf '%s...HEAD' "${compare_base}"
+                    }
+
                     extract_pr_parts() {
                       local pr_url="$1"
                       python3 - "$pr_url" \<<'PY'
@@ -149,6 +175,61 @@ commands:
                         -H "X-GitHub-Api-Version: 2022-11-28" \
                         "${api_url}/repos/${owner}/${repo}/pulls/${number}" |
                         python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["base"]["ref"]); print(data["base"]["sha"])'
+                    }
+
+                    github_pr_files() {
+                      local owner="$1"
+                      local repo="$2"
+                      local number="$3"
+                      local api_url="$4"
+                      local page=1
+                      local response=""
+                      local count=0
+
+                      while :; do
+                        response="$(
+                          curl -fsSL \
+                            -H "Accept: application/vnd.github+json" \
+                            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                            -H "X-GitHub-Api-Version: 2022-11-28" \
+                            "${api_url}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}"
+                        )" || return 1
+
+                        count="$(printf '%s' "${response}" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')" || return 1
+
+                        printf '%s' "${response}" | python3 -c '
+                    import json
+                    import sys
+
+                    data = json.load(sys.stdin)
+                    for item in data:
+                        previous = item.get("previous_filename")
+                        current = item.get("filename")
+                        if previous:
+                            print(previous)
+                        if current:
+                            print(current)
+                    '
+
+                        if (( count < 100 )); then
+                          break
+                        fi
+
+                        page=$((page + 1))
+                      done | python3 -c '
+                    import sys
+
+                    seen = set()
+                    out = []
+                    for raw_line in sys.stdin:
+                        path = raw_line.rstrip("\n")
+                        if path and path not in seen:
+                            seen.add(path)
+                            out.append(path)
+
+                    if out:
+                        sys.stdout.write("\n".join(out) + "\n")
+                    '
                     }
 
                     collect_changed_files() {
@@ -289,6 +370,8 @@ commands:
                       local pr_repo=""
                       local pr_number=""
                       local api_url=""
+                      local api_changed_files=""
+                      local api_lookup_failed=false
                       local tmp_dir=""
                       local all_changed_file=""
                       local matched_file=""
@@ -319,8 +402,14 @@ commands:
                             mapfile -t base_parts < <(printf '%s\n' "${pr_base}")
                             base_ref="${base_parts[0]}"
                             base_sha="${base_parts[1]}"
-                            strategy="github-api"
+                            if api_changed_files="$(github_pr_files "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
+                              strategy="github-api"
+                            else
+                              api_lookup_failed=true
+                              log "GitHub API file lookup failed; falling back to base-branch if available"
+                            fi
                           else
+                            api_lookup_failed=true
                             log "GitHub API lookup failed; falling back to base-branch if available"
                           fi
                         else
@@ -332,20 +421,18 @@ commands:
                         if [[ -n "${base_branch}" ]]; then
                           base_ref="${base_branch}"
                           strategy="git-diff"
+                        elif is_true "${api_lookup_failed}"; then
+                          die "GitHub API lookup failed and no 'base-branch' parameter was provided."
                         else
                           die "Unable to determine a pull request base branch. Provide GITHUB_TOKEN with CIRCLE_PULL_REQUEST, or set the 'base-branch' parameter."
                         fi
                       fi
-
-                      compare_base="$(fetch_base_target "${base_ref}")" || die "Failed to fetch base branch '${base_ref}' from origin."
-                      compare_target="${compare_base}...HEAD"
 
                       log "Strategy: ${strategy}"
                       log "Base branch: $(normalize_base_ref "${base_ref}")"
                       if [[ -n "${base_sha}" ]]; then
                         log "Base SHA: ${base_sha}"
                       fi
-                      log "Diff target: ${compare_target}"
 
                       tmp_dir="$(mktemp -d)"
                       trap "rm -rf '${tmp_dir}'" EXIT
@@ -354,7 +441,19 @@ commands:
                       matched_file="${tmp_dir}/matched.txt"
                       excluded_file="${tmp_dir}/excluded.txt"
 
-                      collect_changed_files "${compare_target}" > "${all_changed_file}"
+                      if [[ "${strategy}" == "github-api" ]]; then
+                        log "Changed files source: GitHub pull request files API"
+                        printf '%s' "${api_changed_files}" > "${all_changed_file}"
+                      else
+                        compare_base="$(fetch_base_target "${base_ref}")" || die "Failed to fetch base branch '${base_ref}' from origin."
+                        compare_target="$(resolve_compare_target "${compare_base}")" || die "Failed to determine a merge base between '${compare_base}' and HEAD. The checkout may be too shallow or the histories may be unrelated."
+                        log "Diff target: ${compare_target}"
+
+                        if ! collect_changed_files "${compare_target}" > "${all_changed_file}"; then
+                          die "Failed to collect changed files from '${compare_target}'."
+                        fi
+                      fi
+
                       match_changed_files "${all_changed_file}" "${matched_file}" "${excluded_file}"
 
                       if is_true "${CHANGED_FILES_DEBUG:-false}"; then
