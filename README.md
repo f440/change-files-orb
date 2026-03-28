@@ -166,7 +166,6 @@ Repo layout:
 - `examples/config.yml`: sample usage
 - `tests/smoke.sh`: local smoke tests for the shell script behavior
 - `.circleci/config.yml`: CI checks for packing, linting, and smoke tests
-- `PLAN.md`: implementation notes and accepted behavior
 
 After changing any orb source file under `src/`, regenerate `orb.yml`:
 
