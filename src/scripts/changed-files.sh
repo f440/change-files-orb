@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+declare -a CHANGED_FILES_INCLUDE_PATTERNS=()
+declare -a CHANGED_FILES_EXCLUDE_PATTERNS=()
+declare -a CHANGED_FILES_PATHSPECS=()
+
 log() {
   printf '[changed-files] %s\n' "$*"
 }
@@ -42,17 +46,61 @@ normalize_base_ref() {
   printf '%s' "$ref"
 }
 
+trim() {
+  local value="$1"
+  printf '%s' "${value}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+normalize_pattern() {
+  local pattern="$1"
+  pattern="${pattern#./}"
+  printf '%s' "${pattern}"
+}
+
+parse_file_patterns() {
+  local raw="$1"
+  local line=""
+  local pattern=""
+
+  CHANGED_FILES_INCLUDE_PATTERNS=()
+  CHANGED_FILES_EXCLUDE_PATTERNS=()
+  CHANGED_FILES_PATHSPECS=()
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    pattern="$(trim "${line}")"
+    [[ -n "${pattern}" ]] || continue
+
+    if [[ "${pattern}" == '!'* ]]; then
+      pattern="$(trim "${pattern#!}")"
+      pattern="$(normalize_pattern "${pattern}")"
+      [[ -n "${pattern}" ]] || die "Exclude patterns in 'files' must not be empty."
+      CHANGED_FILES_EXCLUDE_PATTERNS+=("${pattern}")
+      CHANGED_FILES_PATHSPECS+=(":(exclude,top,glob)${pattern}")
+      continue
+    fi
+
+    pattern="$(normalize_pattern "${pattern}")"
+    [[ -n "${pattern}" ]] || continue
+    CHANGED_FILES_INCLUDE_PATTERNS+=("${pattern}")
+    CHANGED_FILES_PATHSPECS+=(":(top,glob)${pattern}")
+  done <<< "${raw}"
+
+  if (( ${#CHANGED_FILES_INCLUDE_PATTERNS[@]} == 0 )); then
+    die "Parameter 'files' must contain at least one include pattern."
+  fi
+}
+
 fetch_base_target() {
   local ref="$1"
   local normalized_ref
 
-  normalized_ref="$(normalize_base_ref "$ref")"
+  normalized_ref="$(normalize_base_ref "${ref}")"
 
   debug "Fetching origin/${normalized_ref}"
 
   if git fetch --no-tags --depth=256 origin \
     "refs/heads/${normalized_ref}:refs/remotes/origin/${normalized_ref}" >/dev/null 2>&1; then
-    printf 'refs/remotes/origin/%s' "$normalized_ref"
+    printf 'refs/remotes/origin/%s' "${normalized_ref}"
     return 0
   fi
 
@@ -60,7 +108,7 @@ fetch_base_target() {
 
   if git fetch --no-tags --depth=256 origin "${normalized_ref}" >/dev/null 2>&1; then
     if git rev-parse --verify "refs/remotes/origin/${normalized_ref}" >/dev/null 2>&1; then
-      printf 'refs/remotes/origin/%s' "$normalized_ref"
+      printf 'refs/remotes/origin/%s' "${normalized_ref}"
     else
       printf 'FETCH_HEAD'
     fi
@@ -98,24 +146,19 @@ resolve_compare_target() {
 
 extract_pr_parts() {
   local pr_url="$1"
-  python3 - "$pr_url" <<'PY'
-import sys
-from urllib.parse import urlparse
 
-parsed = urlparse(sys.argv[1])
-parts = [part for part in parsed.path.split("/") if part]
+  pr_url="${pr_url%%\#*}"
+  pr_url="${pr_url%%\?*}"
 
-if parsed.scheme != "https":
-    raise SystemExit(1)
+  if [[ ! "${pr_url}" =~ ^https://([^/]+)/([^/]+)/([^/]+)/pull/([0-9]+)/?$ ]]; then
+    return 1
+  fi
 
-if len(parts) != 4 or parts[2] != "pull" or not parts[3].isdigit():
-    raise SystemExit(1)
-
-print(parsed.netloc)
-print(parts[0])
-print(parts[1])
-print(parts[3])
-PY
+  printf '%s\n' \
+    "${BASH_REMATCH[1]}" \
+    "${BASH_REMATCH[2]}" \
+    "${BASH_REMATCH[3]}" \
+    "${BASH_REMATCH[4]}"
 }
 
 resolve_api_url() {
@@ -130,7 +173,7 @@ resolve_api_url() {
   fi
 }
 
-github_pr_base() {
+github_pr_metadata() {
   local owner="$1"
   local repo="$2"
   local number="$3"
@@ -141,195 +184,36 @@ github_pr_base() {
     -H "Authorization: Bearer ${GITHUB_TOKEN}" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "${api_url}/repos/${owner}/${repo}/pulls/${number}" |
-    python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["base"]["ref"]); print(data["base"]["sha"])'
-}
-
-github_pr_files() {
-  local owner="$1"
-  local repo="$2"
-  local number="$3"
-  local api_url="$4"
-  local page=1
-  local response=""
-  local count=0
-
-  while :; do
-    response="$(
-      curl -fsSL \
-        -H "Accept: application/vnd.github+json" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${api_url}/repos/${owner}/${repo}/pulls/${number}/files?per_page=100&page=${page}"
-    )" || return 1
-
-    count="$(printf '%s' "${response}" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')" || return 1
-
-    printf '%s' "${response}" | python3 -c '
-import json
-import sys
-
-data = json.load(sys.stdin)
-for item in data:
-    previous = item.get("previous_filename")
-    current = item.get("filename")
-    if previous:
-        print(previous)
-    if current:
-        print(current)
-'
-
-    if (( count < 100 )); then
-      break
-    fi
-
-    page=$((page + 1))
-  done | python3 -c '
-import sys
-
-seen = set()
-out = []
-for raw_line in sys.stdin:
-    path = raw_line.rstrip("\n")
-    if path and path not in seen:
-        seen.add(path)
-        out.append(path)
-
-if out:
-    sys.stdout.write("\n".join(out) + "\n")
-'
+    jq -er '.base.ref, .base.sha, .head.sha'
 }
 
 collect_changed_files() {
   local compare_target="$1"
 
-  git diff --name-status -z "${compare_target}" | python3 -c '
-import sys
-
-data = sys.stdin.buffer.read().split(b"\0")
-entries = [item.decode("utf-8", "surrogateescape") for item in data if item]
-index = 0
-seen = set()
-out = []
-
-while index < len(entries):
-    status = entries[index]
-    index += 1
-    if status.startswith(("R", "C")):
-        if index + 1 >= len(entries):
-            raise SystemExit("unexpected rename/copy entry in git diff output")
-        old_path = entries[index]
-        new_path = entries[index + 1]
-        index += 2
-        for path in (old_path, new_path):
-            if path not in seen:
-                seen.add(path)
-                out.append(path)
-        continue
-
-    if index >= len(entries):
-        raise SystemExit("unexpected git diff output")
-
-    path = entries[index]
-    index += 1
-    if path not in seen:
-        seen.add(path)
-        out.append(path)
-
-if out:
-    sys.stdout.write("\n".join(out) + "\n")
-'
+  git diff --no-renames --diff-filter=AM --name-only "${compare_target}"
 }
 
-match_changed_files() {
-  local input_file="$1"
-  local matched_file="$2"
-  local excluded_file="$3"
+collect_matching_files() {
+  local compare_target="$1"
 
-  python3 - "$input_file" "$matched_file" "$excluded_file" <<'PY'
-import re
-import sys
-import os
+  git diff --no-renames --diff-filter=AM --name-only "${compare_target}" -- \
+    "${CHANGED_FILES_PATHSPECS[@]}"
+}
 
-input_path, matched_path, excluded_path = sys.argv[1:4]
-
-def read_patterns(raw):
-    patterns = []
-    for line in raw.splitlines():
-        pattern = line.strip()
-        if pattern:
-            patterns.append(pattern)
-    return patterns
-
-def normalize(path):
-    if path.startswith("./"):
-        return path[2:]
-    return path
-
-def compile_glob(pattern):
-    pattern = normalize(pattern)
-    regex = []
-    index = 0
-
-    while index < len(pattern):
-        char = pattern[index]
-        if char == "*":
-            if index + 1 < len(pattern) and pattern[index + 1] == "*":
-                index += 2
-                if index < len(pattern) and pattern[index] == "/":
-                    regex.append("(?:.*/)?")
-                    index += 1
-                else:
-                    regex.append(".*")
-                continue
-            regex.append("[^/]*")
-        elif char == "?":
-            regex.append("[^/]")
-        else:
-            regex.append(re.escape(char))
-        index += 1
-
-    return re.compile("^" + "".join(regex) + "$")
-
-def matches(path, compiled_patterns):
-    normalized = normalize(path)
-    return any(pattern.match(normalized) for pattern in compiled_patterns)
-
-includes = read_patterns(os.environ.get("CHANGED_FILES_INCLUDE", ""))
-excludes = read_patterns(os.environ.get("CHANGED_FILES_EXCLUDE", ""))
-compiled_includes = [compile_glob(pattern) for pattern in includes]
-compiled_excludes = [compile_glob(pattern) for pattern in excludes]
-
-with open(input_path, "r", encoding="utf-8") as fh:
-    files = [line.rstrip("\n") for line in fh if line.rstrip("\n")]
-
-matched = []
-excluded = []
-
-for file_path in files:
-    if not matches(file_path, compiled_includes):
-        continue
-    if compiled_excludes and matches(file_path, compiled_excludes):
-        excluded.append(normalize(file_path))
-        continue
-    matched.append(normalize(file_path))
-
-with open(matched_path, "w", encoding="utf-8") as fh:
-    for item in matched:
-        fh.write(item + "\n")
-
-with open(excluded_path, "w", encoding="utf-8") as fh:
-    for item in excluded:
-        fh.write(item + "\n")
-PY
+continue_without_detection() {
+  log "$1"
+  return 0
 }
 
 main() {
   local include_raw="${CHANGED_FILES_INCLUDE:-}"
   local base_branch="${CHANGED_FILES_BASE_BRANCH:-}"
   local pr_url="${CIRCLE_PULL_REQUEST:-}"
-  local strategy=""
+  local strategy="git-diff"
+  local base_source=""
   local base_ref=""
   local base_sha=""
+  local head_sha=""
   local compare_base=""
   local compare_target=""
   local pr_host=""
@@ -337,26 +221,24 @@ main() {
   local pr_repo=""
   local pr_number=""
   local api_url=""
-  local api_changed_files=""
-  local api_lookup_failed=false
+  local local_head=""
   local tmp_dir=""
   local all_changed_file=""
   local matched_file=""
-  local excluded_file=""
 
   require_command git
   require_command curl
-  require_command python3
+  require_command jq
 
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Run this command inside a git checkout."
 
-  if [[ -z "${include_raw//[$'\t\r\n ']}" ]]; then
-    die "Parameter 'files' must contain at least one include pattern."
-  fi
+  parse_file_patterns "${include_raw}"
+
+  local_head="$(git rev-parse HEAD)"
 
   if [[ -n "${base_branch}" ]]; then
     base_ref="${base_branch}"
-    strategy="git-diff"
+    base_source="explicit base-branch"
     debug "Using explicit base branch '${base_branch}'; skipping GitHub API lookup"
   elif [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
     if pr_parts="$(extract_pr_parts "${pr_url}")"; then
@@ -369,60 +251,71 @@ main() {
       debug "Resolved pull request ${pr_owner}/${pr_repo}#${pr_number} from ${pr_host}"
       debug "Using GitHub API endpoint ${api_url}"
 
-      if pr_base="$(github_pr_base "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
-        mapfile -t base_parts < <(printf '%s\n' "${pr_base}")
-        base_ref="${base_parts[0]}"
-        base_sha="${base_parts[1]}"
-        if api_changed_files="$(github_pr_files "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
-          strategy="github-api"
-        else
-          api_lookup_failed=true
-          log "GitHub API file lookup failed; falling back to base-branch if available"
-        fi
+      if pr_metadata="$(github_pr_metadata "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
+        mapfile -t metadata_parts < <(printf '%s\n' "${pr_metadata}")
+        base_ref="${metadata_parts[0]}"
+        base_sha="${metadata_parts[1]}"
+        head_sha="${metadata_parts[2]}"
+        base_source="GitHub pull request metadata API"
       else
-        api_lookup_failed=true
-        log "GitHub API lookup failed; falling back to base-branch if available"
+        continue_without_detection \
+          "GitHub API lookup failed; unable to determine changed files, so the job will continue."
+        return 0
       fi
     else
-      log "CIRCLE_PULL_REQUEST is not a supported GitHub pull request URL; falling back to base-branch if available"
+      continue_without_detection \
+        "CIRCLE_PULL_REQUEST is not a supported GitHub pull request URL; unable to determine changed files, so the job will continue."
+      return 0
     fi
-  fi
-
-  if [[ -z "${strategy}" ]]; then
-    if is_true "${api_lookup_failed}"; then
-      die "GitHub API lookup failed and no 'base-branch' parameter was provided."
-    else
-      die "Unable to determine a pull request base branch. Provide GITHUB_TOKEN with CIRCLE_PULL_REQUEST, or set the 'base-branch' parameter."
-    fi
+  else
+    continue_without_detection \
+      "Unable to determine a pull request base branch; unable to determine changed files, so the job will continue."
+    return 0
   fi
 
   log "Strategy: ${strategy}"
+  log "Base source: ${base_source}"
   log "Base branch: $(normalize_base_ref "${base_ref}")"
   if [[ -n "${base_sha}" ]]; then
     log "Base SHA: ${base_sha}"
   fi
+
+  if [[ -n "${head_sha}" && "${head_sha}" != "${local_head}" ]]; then
+    continue_without_detection \
+      "GitHub API reported head SHA ${head_sha}, but local HEAD is ${local_head}; unable to trust the diff, so the job will continue."
+    return 0
+  fi
+
+  compare_base="$(fetch_base_target "${base_ref}")" || {
+    continue_without_detection \
+      "Failed to fetch base branch '${base_ref}' from origin; unable to determine changed files, so the job will continue."
+    return 0
+  }
+
+  compare_target="$(resolve_compare_target "${compare_base}")" || {
+    continue_without_detection \
+      "Failed to determine a merge base between '${compare_base}' and HEAD; unable to determine changed files, so the job will continue."
+    return 0
+  }
+  log "Diff target: ${compare_target}"
 
   tmp_dir="$(mktemp -d)"
   trap "rm -rf '${tmp_dir}'" EXIT
 
   all_changed_file="${tmp_dir}/changed.txt"
   matched_file="${tmp_dir}/matched.txt"
-  excluded_file="${tmp_dir}/excluded.txt"
 
-  if [[ "${strategy}" == "github-api" ]]; then
-    log "Changed files source: GitHub pull request files API"
-    printf '%s' "${api_changed_files}" > "${all_changed_file}"
-  else
-    compare_base="$(fetch_base_target "${base_ref}")" || die "Failed to fetch base branch '${base_ref}' from origin."
-    compare_target="$(resolve_compare_target "${compare_base}")" || die "Failed to determine a merge base between '${compare_base}' and HEAD. The checkout may be too shallow or the histories may be unrelated."
-    log "Diff target: ${compare_target}"
-
-    if ! collect_changed_files "${compare_target}" > "${all_changed_file}"; then
-      die "Failed to collect changed files from '${compare_target}'."
-    fi
+  if ! collect_changed_files "${compare_target}" > "${all_changed_file}"; then
+    continue_without_detection \
+      "Failed to collect changed files from '${compare_target}'; the job will continue."
+    return 0
   fi
 
-  match_changed_files "${all_changed_file}" "${matched_file}" "${excluded_file}"
+  if ! collect_matching_files "${compare_target}" > "${matched_file}"; then
+    continue_without_detection \
+      "Failed to collect matching files from '${compare_target}'; the job will continue."
+    return 0
+  fi
 
   if is_true "${CHANGED_FILES_DEBUG:-false}"; then
     debug "changed files"
@@ -431,21 +324,21 @@ main() {
     else
       debug "  (none)"
     fi
+
     debug "include patterns"
-    while IFS= read -r pattern; do
-      [[ -n "${pattern}" ]] || continue
-      debug "  ${pattern}"
-    done <<< "${CHANGED_FILES_INCLUDE}"
-    if [[ -n "${CHANGED_FILES_EXCLUDE:-}" ]]; then
-      debug "exclude patterns"
-      while IFS= read -r pattern; do
-        [[ -n "${pattern}" ]] || continue
+    if (( ${#CHANGED_FILES_INCLUDE_PATTERNS[@]} == 0 )); then
+      debug "  (none)"
+    else
+      for pattern in "${CHANGED_FILES_INCLUDE_PATTERNS[@]}"; do
         debug "  ${pattern}"
-      done <<< "${CHANGED_FILES_EXCLUDE}"
+      done
     fi
-    if [[ -s "${excluded_file}" ]]; then
-      debug "excluded matches"
-      sed 's/^/[changed-files] DEBUG:   /' "${excluded_file}" >&2
+
+    if (( ${#CHANGED_FILES_EXCLUDE_PATTERNS[@]} > 0 )); then
+      debug "exclude patterns"
+      for pattern in "${CHANGED_FILES_EXCLUDE_PATTERNS[@]}"; do
+        debug "  ${pattern}"
+      done
     fi
   fi
 

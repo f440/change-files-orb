@@ -6,16 +6,16 @@ This orb is implemented as a URL orb under `orb.yml`.
 
 ## Goal
 
-On GitHub pull request pipelines, detect whether target files changed.
+On GitHub pull request pipelines, detect whether relevant files changed.
 If no matching files changed, the orb marks the step as successful and stops the rest of the job with `circleci-agent step halt`.
 
 The current implementation:
 
 - Prefers `base-branch` when it is explicitly set
 - Uses `GITHUB_TOKEN` to query GitHub pull request metadata only when `base-branch` is not set
-- Avoids requiring `gh` CLI
-- Uses `git diff` only when `base-branch` is explicitly set
-- Fails if neither explicit `base-branch` nor GitHub API-based pull request metadata is available
+- Uses local `git diff` for the actual file detection in every successful path
+- Uses `!pattern` inside `files` for exclusions
+- Falls back to continuing the job when it cannot determine a trustworthy diff
 
 ## Files
 
@@ -24,7 +24,7 @@ The current implementation:
 - `examples/config.yml`: sample usage
 - `tests/smoke.sh`: local smoke tests for the shell script behavior
 - `.circleci/config.yml`: CI checks for packing, linting, and smoke tests
-- `PLAN.md`: implementation notes and test cases
+- `PLAN.md`: implementation notes and accepted behavior
 
 ## Usage
 
@@ -37,17 +37,17 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/python:3.12
+      - image: cimg/base:stable
     steps:
       - checkout
       - changed-files/check:
           files: |
             src/**
             tests/**
-            pyproject.toml
+            !tests/fixtures/**
       - run:
           name: Run tests
-          command: python -m unittest discover
+          command: make test
 
 workflows:
   test:
@@ -57,7 +57,7 @@ workflows:
 
 ### Explicit base branch fallback
 
-Use this when `GITHUB_TOKEN` is not available, or when you want to force local `git diff` instead of GitHub API lookup.
+Use this when `GITHUB_TOKEN` is not available, or when you want to force base branch lookup from local git state.
 
 ```yaml
 version: 2.1
@@ -68,7 +68,7 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/python:3.12
+      - image: cimg/base:stable
     steps:
       - checkout
       - changed-files/check:
@@ -76,40 +76,43 @@ jobs:
           files: |
             src/**
             tests/**
-            pyproject.toml
       - run:
           name: Run tests
-          command: python -m unittest discover
+          command: make test
 ```
 
 ## Parameters
 
 | Parameter | Required | Type | Description |
 | --- | --- | --- | --- |
-| `files` | yes | string | Newline-delimited include globs, evaluated from the repository root |
-| `files-ignore` | no | string | Newline-delimited exclude globs |
-| `base-branch` | conditional | string | Required when the orb cannot determine a PR base ref and `GITHUB_TOKEN` is not available |
-| `debug` | no | boolean | Print the detection path, comparison target, and matched files |
+| `files` | yes | string | Newline-delimited globs evaluated from the repository root. Prefix a pattern with `!` to exclude it. |
+| `base-branch` | no | string | Explicit base branch to diff against. When set, GitHub API lookup is skipped. |
+| `debug` | no | boolean | Print the detection path, comparison target, raw changed files, and parsed patterns. |
 
-Supported glob syntax:
-
-- `*` matches within a single path segment
-- `?` matches a single non-`/` character
-- `**` matches across directory boundaries
+Supported glob syntax follows Git pathspec `glob` behavior.
 
 Examples:
 
 - `src/**` matches `src/main.go` and `src/pkg/util/file.go`
 - `docs/**/*.md` matches Markdown files at any depth under `docs/`
+- `!docs/generated/**` excludes generated content from an otherwise broader include
 
 ## How detection works
 
 The orb uses the following resolution order:
 
-1. If `base-branch` is explicitly set, use local `git diff`.
-2. Otherwise, if both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch the PR metadata and changed files from GitHub or GitHub Enterprise.
-3. On the `git diff` path, fetch the base branch from `origin`, deepen shallow history if needed, and compare it to `HEAD`.
-4. If no changed file matches `files` after applying `files-ignore`, call `circleci-agent step halt`.
+1. If `base-branch` is explicitly set, skip GitHub API lookup and use local `git diff`.
+2. Otherwise, if both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch pull request metadata from GitHub or GitHub Enterprise.
+3. Fetch and deepen the base branch as needed, then compare it to `HEAD` with `git diff --no-renames --diff-filter=AM`.
+4. Apply the include and exclude patterns directly through Git pathspecs.
+5. If no matching file remains, call `circleci-agent step halt`.
+
+Important behavior:
+
+- Added and modified files participate in matching.
+- Deleted files are ignored.
+- Renames are treated as delete + add because the diff uses `--no-renames`.
+- If the orb cannot determine a trustworthy diff, it logs why and continues the job instead of halting it.
 
 The implementation intentionally does not reference `pipeline.event.*`.
 Those values are compile-time features and are not reliably available across GitHub App and GitHub OAuth project setups.
@@ -150,10 +153,7 @@ The executor image must provide:
 - `bash`
 - `git`
 - `curl`
-- `python3`
-
-The orb uses `python3` to parse GitHub API JSON and apply glob matching consistently.
-The examples above use `cimg/python` so the sample `python -m unittest` command and the orb runtime requirements are both satisfied.
+- `jq`
 
 Environment inputs used by the runtime:
 
@@ -161,7 +161,7 @@ Environment inputs used by the runtime:
 - `CIRCLE_PULL_REQUEST`: optional pull request URL for GitHub.com or GitHub Enterprise
 - `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
 
-If `base-branch` is set, these API-related variables are ignored for file detection.
+If `base-branch` is set, these API-related variables are ignored for diff target resolution.
 
 ## Development
 
@@ -191,31 +191,31 @@ The CI job in `.circleci/config.yml` verifies:
 - `orb.yml` is up to date with `src/`
 - `src/scripts/changed-files.sh` and `tests/smoke.sh` pass `shellcheck`
 - Orb and CI YAML files pass `yamllint`
-- The smoke tests cover match, halt, ignore, rename, and validation failure paths
-- The smoke tests also cover recursive `**` matching, deleted files, GitHub API resolution, shallow history, and failure paths for missing PR context, API failure, and invalid base branches
+- The smoke tests cover include and exclude matching, rename behavior, deleted files, API metadata lookup, shallow history, fail-open cases, and validation failures
 
 ## Why not use `gh`
 
 The implementation intentionally avoids depending on GitHub CLI.
 
 - It adds an extra runtime dependency to every executor image
-- The needed data can be obtained from `CIRCLE_PULL_REQUEST`, GitHub REST API, and `git diff`
-- `curl` plus the existing Git toolchain is enough for the current behavior
+- The needed data can be obtained from `CIRCLE_PULL_REQUEST`, GitHub REST API metadata, and `git diff`
+- `curl`, `jq`, and the existing Git toolchain are enough for the current behavior
 
 ## Scope and Non-goals
 
 Current scope:
 
 - GitHub pull request pipelines only
-- File matching based on include and exclude globs
-- Skip the rest of the current job when no relevant files changed
+- File matching based on newline-delimited globs in `files`
+- Exclusions via `!pattern`
+- Skip the rest of the current job when no relevant added or modified files changed
 
 Current non-goals:
 
 - Push event support
 - GitLab or Bitbucket support
 - Full compatibility with `tj-actions/changed-files`
-- Returning a full changed-file list as reusable outputs
+- Returning a reusable changed-file list as outputs
 
 Reference inspiration:
 

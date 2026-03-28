@@ -5,17 +5,12 @@ parameters:
   files:
     type: string
     description: |
-      Newline-delimited include globs evaluated from the repository root.
-  files-ignore:
-    type: string
-    default: ""
-    description: |
-      Newline-delimited exclude globs evaluated from the repository root.
+      Newline-delimited globs evaluated from the repository root. Prefix a pattern with ! to exclude it.
   base-branch:
     type: string
     default: ""
     description: |
-      Explicit base branch to diff against when GitHub API lookup is unavailable.
+      Explicit base branch to diff against. When set, GitHub API lookup is skipped.
   debug:
     type: boolean
     default: false
@@ -27,7 +22,6 @@ steps:
       name: Check changed files
       environment:
         CHANGED_FILES_INCLUDE: << parameters.files >>
-        CHANGED_FILES_EXCLUDE: << parameters.files-ignore >>
         CHANGED_FILES_BASE_BRANCH: << parameters.base-branch >>
         CHANGED_FILES_DEBUG: << parameters.debug >>
       command: <<include(scripts/changed-files.sh)>>
