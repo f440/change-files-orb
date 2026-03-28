@@ -40,6 +40,18 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "Required command '$1' is not available in this executor."
 }
 
+read_env_var_by_name() {
+  local name="$1"
+
+  [[ -n "${name}" ]] || return 0
+
+  if [[ ! "${name}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    die "Environment variable name '${name}' is invalid."
+  fi
+
+  printf '%s' "${!name:-}"
+}
+
 normalize_base_ref() {
   local ref="$1"
   ref="${ref#refs/heads/}"
@@ -208,6 +220,8 @@ continue_without_detection() {
 main() {
   local include_raw="${CHANGED_FILES_INCLUDE:-}"
   local base_branch="${CHANGED_FILES_BASE_BRANCH:-}"
+  local github_token_env_var="${CHANGED_FILES_GITHUB_TOKEN_ENV_VAR:-GITHUB_TOKEN}"
+  local github_token=""
   local pr_url="${CIRCLE_PULL_REQUEST:-}"
   local strategy=""
   local base_source=""
@@ -231,6 +245,7 @@ main() {
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Run this command inside a git checkout."
 
   parse_file_patterns "${include_raw}"
+  github_token="$(read_env_var_by_name "${github_token_env_var}")"
 
   local_head="$(git rev-parse HEAD)"
 
@@ -239,7 +254,7 @@ main() {
     base_ref="${base_branch}"
     base_source="explicit base-branch"
     debug "Using explicit base branch '${base_branch}'; skipping GitHub API lookup"
-  elif [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
+  elif [[ -n "${github_token}" && -n "${pr_url}" ]]; then
     strategy="pull-request-metadata"
     require_command curl
     require_command jq
@@ -253,8 +268,9 @@ main() {
       api_url="$(resolve_api_url "${pr_host}")"
       debug "Resolved pull request ${pr_owner}/${pr_repo}#${pr_number} from ${pr_host}"
       debug "Using GitHub API endpoint ${api_url}"
+      debug "Using GitHub token environment variable '${github_token_env_var}'"
 
-      if pr_metadata="$(github_pr_metadata "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
+      if pr_metadata="$(GITHUB_TOKEN="${github_token}" github_pr_metadata "${pr_owner}" "${pr_repo}" "${pr_number}" "${api_url}")"; then
         mapfile -t metadata_parts < <(printf '%s\n' "${pr_metadata}")
         base_ref="${metadata_parts[0]}"
         base_sha="${metadata_parts[1]}"

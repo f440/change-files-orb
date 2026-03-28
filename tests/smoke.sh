@@ -276,6 +276,37 @@ test_github_api_metadata_strategy_supports_enterprise_pr_urls() {
   assert_contains "$(cat "${curl_log}")" "https://ghe.example.com/api/v3/repos/acme/widgets/pulls/42"
 }
 
+test_custom_github_token_env_var_is_supported() {
+  local repo output content response_file curl_log head_sha
+
+  repo="$(clone_feature_repo custom-token-case)"
+  (
+    cd "${repo}"
+    printf 'func main() {}\n' >> src/main.go
+    git add src/main.go
+    git commit -m custom-token >/dev/null
+  )
+
+  head_sha="$(cd "${repo}" && git rev-parse HEAD)"
+  response_file="${TEST_ROOT}/pull-custom-token.json"
+  curl_log="${TEST_ROOT}/custom-token-curl.log"
+  write_pr_response "${response_file}" "main" "1234567890abcdef" "${head_sha}"
+
+  output="${TEST_ROOT}/custom-token.out"
+  run_orb_script "${repo}" 'src/**' "" "${output}" \
+    "CHANGED_FILES_GITHUB_TOKEN_ENV_VAR=GH_PAT" \
+    "GH_PAT=test-token" \
+    "CIRCLE_PULL_REQUEST=https://ghe.example.com/acme/widgets/pull/42" \
+    "TEST_FAKE_CURL_PR_RESPONSE_FILE=${response_file}" \
+    "TEST_CURL_LOG=${curl_log}"
+
+  content="$(cat "${output}")"
+  assert_contains "${content}" "Strategy: pull-request-metadata"
+  assert_contains "${content}" "src/main.go"
+  assert_contains "${content}" "Using GitHub token environment variable 'GH_PAT'"
+  assert_contains "$(cat "${curl_log}")" "Authorization: Bearer test-token"
+}
+
 test_explicit_base_branch_skips_github_api() {
   local repo output content curl_log
 
@@ -565,6 +596,8 @@ EOF
   test_deleted_file_does_not_match
   log "Running GitHub API metadata case"
   test_github_api_metadata_strategy_supports_enterprise_pr_urls
+  log "Running custom GitHub token env var case"
+  test_custom_github_token_env_var_is_supported
   log "Running explicit base-branch precedence case"
   test_explicit_base_branch_skips_github_api
   log "Running explicit base-branch no API tools case"

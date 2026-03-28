@@ -79,7 +79,7 @@ Examples:
 Resolution order:
 
 1. If `base-branch` is set, skip GitHub API lookup and use local `git diff`.
-2. Otherwise, if both `GITHUB_TOKEN` and `CIRCLE_PULL_REQUEST` are available, fetch pull request metadata from GitHub or GitHub Enterprise.
+2. Otherwise, if both the configured GitHub token environment variable and `CIRCLE_PULL_REQUEST` are available, fetch pull request metadata from GitHub or GitHub Enterprise.
 3. Fetch and deepen the base branch as needed, then compare it to `HEAD` with `git diff --no-renames --diff-filter=AM`.
 4. Apply the include and exclude patterns directly through Git pathspecs.
 5. If no matching file remains, call `circleci-agent step halt`.
@@ -112,7 +112,7 @@ The examples use `cimg/base:current`, which already includes `curl` and `jq`.
 
 Environment inputs used by the runtime:
 
-- `GITHUB_TOKEN`: optional, enables GitHub API pull request lookup
+- `GITHUB_TOKEN`: default optional token env var for GitHub API pull request lookup
 - `CIRCLE_PULL_REQUEST`: optional pull request URL for GitHub.com or GitHub Enterprise
 - `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
 
@@ -123,7 +123,7 @@ If `base-branch` is set, these API-related variables and tool requirements are i
 
 The implementation intentionally does not reference `pipeline.event.*`.
 Those values are compile-time features and are not reliably available across GitHub App and GitHub OAuth project setups.
-Using `CIRCLE_PULL_REQUEST` plus `GITHUB_TOKEN` keeps the runtime path compatible across both setups.
+Using `CIRCLE_PULL_REQUEST` plus a configurable GitHub token env var keeps the runtime path compatible across both setups.
 
 ### GitHub App pipeline
 
@@ -135,7 +135,7 @@ This orb does not rely on them, because directly referencing those values can br
 On GitHub OAuth pipelines, expect to rely on:
 
 - `CIRCLE_PULL_REQUEST` for the PR URL
-- `GITHUB_TOKEN` for GitHub REST API access
+- `GITHUB_TOKEN` or the env var selected by `github-token-env-var` for GitHub REST API access
 - `base-branch` as an explicit fallback
 
 Installing the CircleCI GitHub App is not enough by itself. The project must actually be configured and running as a GitHub App pipeline for the GitHub App-specific pipeline values to be present.

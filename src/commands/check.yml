@@ -11,6 +11,11 @@ parameters:
     default: ""
     description: |
       Explicit base branch to diff against. When set, GitHub API lookup is skipped.
+  github-token-env-var:
+    type: env_var_name
+    default: GITHUB_TOKEN
+    description: |
+      Environment variable that contains the GitHub token used for pull request metadata lookup.
   debug:
     type: boolean
     default: false
@@ -23,5 +28,6 @@ steps:
       environment:
         CHANGED_FILES_INCLUDE: << parameters.files >>
         CHANGED_FILES_BASE_BRANCH: << parameters.base-branch >>
+        CHANGED_FILES_GITHUB_TOKEN_ENV_VAR: << parameters.github-token-env-var >>
         CHANGED_FILES_DEBUG: << parameters.debug >>
       command: <<include(scripts/changed-files.sh)>>
