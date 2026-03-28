@@ -62,7 +62,7 @@ jobs:
 
 This pattern is useful when feature branches usually target `develop`, but commits that run on `main` should always execute the full test suite.
 
-For a fuller example, see [examples/config.yml](/home/f440/go/src/github.com/circleci-orbs/examples/config.yml).
+For a fuller example, see [examples/config.yml](examples/config.yml).
 
 ## Parameters
 
