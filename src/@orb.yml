@@ -4,5 +4,5 @@ description: |
   Skip the rest of a job when a GitHub pull request does not modify matching files.
 
 display:
-  home_url: "https://github.com/circleci-orbs"
-  source_url: "https://github.com/circleci-orbs"
+  home_url: "https://github.com/f440/change-files-orb"
+  source_url: "https://github.com/f440/change-files-orb"

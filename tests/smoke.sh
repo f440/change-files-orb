@@ -269,7 +269,7 @@ test_github_api_metadata_strategy_supports_enterprise_pr_urls() {
     "TEST_CURL_LOG=${curl_log}"
 
   content="$(cat "${output}")"
-  assert_contains "${content}" "Strategy: git-diff"
+  assert_contains "${content}" "Strategy: pull-request-metadata"
   assert_contains "${content}" "Base source: GitHub pull request metadata API"
   assert_contains "${content}" "Base branch: main"
   assert_contains "${content}" "src/main.go"
@@ -296,12 +296,46 @@ test_explicit_base_branch_skips_github_api() {
     "TEST_FAKE_CURL_EXIT_CODE=22"
 
   content="$(cat "${output}")"
-  assert_contains "${content}" "Strategy: git-diff"
+  assert_contains "${content}" "Strategy: explicit-base-branch"
   assert_contains "${content}" "src/main.go"
 
   if [[ -e "${curl_log}" && -s "${curl_log}" ]]; then
     fail "Expected no GitHub API calls when base-branch is set, but curl was invoked."
   fi
+}
+
+test_explicit_base_branch_does_not_require_api_tools() {
+  local repo output status content limited_path
+
+  repo="$(clone_feature_repo no-api-tools-case)"
+  (
+    cd "${repo}"
+    printf 'func main() {}\n' >> src/main.go
+    git add src/main.go
+    git commit -m no-api-tools >/dev/null
+  )
+
+  limited_path="${TEST_ROOT}/limited-path"
+  mkdir -p "${limited_path}"
+  ln -s "$(command -v bash)" "${limited_path}/bash"
+  ln -s "$(command -v git)" "${limited_path}/git"
+  ln -s "$(command -v sed)" "${limited_path}/sed"
+  ln -s "$(command -v mktemp)" "${limited_path}/mktemp"
+  ln -s "$(command -v rm)" "${limited_path}/rm"
+
+  output="${TEST_ROOT}/no-api-tools.out"
+  set +e
+  run_orb_script "${repo}" 'src/**' "main" "${output}" \
+    "PATH=${TEST_BIN_DIR}:${limited_path}"
+  status=$?
+  set -e
+
+  assert_exit_code "${status}" 0
+  content="$(cat "${output}")"
+  assert_contains "${content}" "Strategy: explicit-base-branch"
+  assert_contains "${content}" "Matching files detected:"
+  assert_not_contains "${content}" "Required command 'curl' is not available"
+  assert_not_contains "${content}" "Required command 'jq' is not available"
 }
 
 test_missing_pr_context_and_base_branch_continues() {
@@ -533,6 +567,8 @@ EOF
   test_github_api_metadata_strategy_supports_enterprise_pr_urls
   log "Running explicit base-branch precedence case"
   test_explicit_base_branch_skips_github_api
+  log "Running explicit base-branch no API tools case"
+  test_explicit_base_branch_does_not_require_api_tools
   log "Running missing PR context case"
   test_missing_pr_context_and_base_branch_continues
   log "Running API failure case"

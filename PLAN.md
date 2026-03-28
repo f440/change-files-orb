@@ -187,7 +187,8 @@ Rationale:
 
 ### Shell/runtime assumptions
 
-- Target a standard Linux CircleCI environment with `bash`, `git`, `curl`, and `jq`
+- Target a standard Linux CircleCI environment with `bash` and `git`
+- Require `curl` and `jq` only for the GitHub API metadata path
 - Do not require `python3`
 
 ### Closed decisions for v1

@@ -37,7 +37,7 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/base:current
     steps:
       - checkout
       - changed-files/check:
@@ -68,7 +68,7 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/base:current
     steps:
       - checkout
       - changed-files/check:
@@ -148,12 +148,19 @@ Useful references:
 
 ## Runtime Requirements
 
-The executor image must provide:
+The executor image must always provide:
 
 - `bash`
 - `git`
+
+The executor image must also provide:
+
 - `curl`
 - `jq`
+
+only when the orb needs GitHub API pull request metadata lookup.
+
+The examples use `cimg/base:current`, which already includes `curl` and `jq`.
 
 Environment inputs used by the runtime:
 
@@ -161,7 +168,7 @@ Environment inputs used by the runtime:
 - `CIRCLE_PULL_REQUEST`: optional pull request URL for GitHub.com or GitHub Enterprise
 - `GITHUB_API_URL`: optional API base URL override, mainly for GitHub Enterprise
 
-If `base-branch` is set, these API-related variables are ignored for diff target resolution.
+If `base-branch` is set, these API-related variables and tool requirements are ignored for diff target resolution.
 
 ## Development
 

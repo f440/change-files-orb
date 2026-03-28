@@ -209,7 +209,7 @@ main() {
   local include_raw="${CHANGED_FILES_INCLUDE:-}"
   local base_branch="${CHANGED_FILES_BASE_BRANCH:-}"
   local pr_url="${CIRCLE_PULL_REQUEST:-}"
-  local strategy="git-diff"
+  local strategy=""
   local base_source=""
   local base_ref=""
   local base_sha=""
@@ -227,8 +227,6 @@ main() {
   local matched_file=""
 
   require_command git
-  require_command curl
-  require_command jq
 
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "Run this command inside a git checkout."
 
@@ -237,10 +235,15 @@ main() {
   local_head="$(git rev-parse HEAD)"
 
   if [[ -n "${base_branch}" ]]; then
+    strategy="explicit-base-branch"
     base_ref="${base_branch}"
     base_source="explicit base-branch"
     debug "Using explicit base branch '${base_branch}'; skipping GitHub API lookup"
   elif [[ -n "${GITHUB_TOKEN:-}" && -n "${pr_url}" ]]; then
+    strategy="pull-request-metadata"
+    require_command curl
+    require_command jq
+
     if pr_parts="$(extract_pr_parts "${pr_url}")"; then
       mapfile -t parts < <(printf '%s\n' "${pr_parts}")
       pr_host="${parts[0]}"

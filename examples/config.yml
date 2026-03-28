@@ -6,20 +6,20 @@ orbs:
 jobs:
   test_with_github_api:
     docker:
-      - image: cimg/python:3.12
+      - image: cimg/base:current
     steps:
       - checkout
       - changed-files/check:
           files: |
             src/**
             tests/**
-            pyproject.toml
+            !tests/fixtures/**
       - run:
           name: Run tests
-          command: python -m unittest discover
+          command: make test
   test_with_base_branch_fallback:
     docker:
-      - image: cimg/python:3.12
+      - image: cimg/base:current
     steps:
       - checkout
       - changed-files/check:
@@ -27,10 +27,9 @@ jobs:
           files: |
             src/**
             tests/**
-            pyproject.toml
       - run:
           name: Run tests
-          command: python -m unittest discover
+          command: make test
 
 workflows:
   test:
