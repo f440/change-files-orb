@@ -87,15 +87,15 @@ Resolution order:
 
 1. If `base-branch` is set, skip GitHub API lookup and use local `git diff`.
 2. Otherwise, if both the configured GitHub token environment variable and `CIRCLE_PULL_REQUEST` are available, fetch pull request metadata from GitHub or GitHub Enterprise.
-3. Fetch and deepen the base branch as needed, then compare it to `HEAD` with `git diff --no-renames --diff-filter=AM`.
+3. Fetch and deepen the base branch as needed, then compare it to `HEAD` with `git diff --no-renames --ignore-submodules=all --diff-filter=ACDMRTUX`.
 4. Apply the include and exclude patterns directly through Git pathspecs.
 5. If no matching file remains, call `circleci-agent step halt`.
 
 Important behavior:
 
-- Added and modified files participate in matching.
-- Deleted files are ignored.
+- Added, copied, deleted, modified, renamed, type-changed, unmerged, and unknown paths can participate in matching.
 - Renames are treated as delete + add because the diff uses `--no-renames`.
+- Submodule changes are ignored because the diff uses `--ignore-submodules=all`.
 - If the orb cannot determine a trustworthy diff, it logs why and continues the job instead of halting it.
 
 For GitHub Enterprise pull request URLs, the orb derives the default API endpoint as `https://<pull-request-host>/api/v3`.
@@ -213,7 +213,7 @@ Current scope:
 - GitHub pull request pipelines only
 - File matching based on newline-delimited globs in `files`
 - Exclusions via `!pattern`
-- Skip the rest of the current job when no relevant added or modified files changed
+- Skip the rest of the current job when no relevant changed files remain after diff filtering and pathspec matching
 
 Current non-goals:
 

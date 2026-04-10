@@ -5,7 +5,6 @@ set -euo pipefail
 declare -a CHANGED_FILES_INCLUDE_PATTERNS=()
 declare -a CHANGED_FILES_EXCLUDE_PATTERNS=()
 declare -a CHANGED_FILES_PATHSPECS=()
-
 log() {
   printf '[changed-files] %s\n' "$*"
 }
@@ -77,7 +76,6 @@ parse_file_patterns() {
   CHANGED_FILES_INCLUDE_PATTERNS=()
   CHANGED_FILES_EXCLUDE_PATTERNS=()
   CHANGED_FILES_PATHSPECS=()
-
   while IFS= read -r line || [[ -n "${line}" ]]; do
     pattern="$(trim "${line}")"
     [[ -n "${pattern}" ]] || continue
@@ -202,13 +200,13 @@ github_pr_metadata() {
 collect_changed_files() {
   local compare_target="$1"
 
-  git diff --no-renames --diff-filter=AM --name-only "${compare_target}"
+  git diff --no-renames --ignore-submodules=all --diff-filter=ACDMRTUX --name-only "${compare_target}"
 }
 
 collect_matching_files() {
   local compare_target="$1"
 
-  git diff --no-renames --diff-filter=AM --name-only "${compare_target}" -- \
+  git diff --no-renames --ignore-submodules=all --diff-filter=ACDMRTUX --name-only "${compare_target}" -- \
     "${CHANGED_FILES_PATHSPECS[@]}"
 }
 

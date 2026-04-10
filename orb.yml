@@ -235,13 +235,13 @@ commands:
                     collect_changed_files() {
                       local compare_target="$1"
 
-                      git diff --no-renames --diff-filter=AM --name-only "${compare_target}"
+                      git diff --no-renames --ignore-submodules=all --diff-filter=ACDMRTUX --name-only "${compare_target}"
                     }
 
                     collect_matching_files() {
                       local compare_target="$1"
 
-                      git diff --no-renames --diff-filter=AM --name-only "${compare_target}" -- \
+                      git diff --no-renames --ignore-submodules=all --diff-filter=ACDMRTUX --name-only "${compare_target}" -- \
                         "${CHANGED_FILES_PATHSPECS[@]}"
                     }
 

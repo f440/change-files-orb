@@ -202,9 +202,8 @@ test_rename_old_path_no_longer_matches() {
   run_orb_script "${repo}" 'src/**' "main" "${output}"
 
   content="$(cat "${output}")"
-  assert_contains "${content}" "No matching files changed"
-  assert_contains "${content}" "circleci-agent step halt"
-  assert_not_contains "${content}" "Matching files detected:"
+  assert_contains "${content}" "Matching files detected:"
+  assert_contains "${content}" "src/main.go"
 }
 
 test_rename_new_path_matches_as_added() {
@@ -226,7 +225,7 @@ test_rename_new_path_matches_as_added() {
   assert_contains "${content}" "app/main.go"
 }
 
-test_deleted_file_does_not_match() {
+test_deleted_file_matches() {
   local repo output content
 
   repo="$(clone_feature_repo delete-case)"
@@ -240,9 +239,8 @@ test_deleted_file_does_not_match() {
   run_orb_script "${repo}" 'docs/**' "main" "${output}"
 
   content="$(cat "${output}")"
-  assert_contains "${content}" "No matching files changed"
-  assert_contains "${content}" "circleci-agent step halt"
-  assert_not_contains "${content}" "docs/readme.md"
+  assert_contains "${content}" "Matching files detected:"
+  assert_contains "${content}" "docs/readme.md"
 }
 
 test_github_api_metadata_strategy_supports_enterprise_pr_urls() {
@@ -593,7 +591,7 @@ EOF
   log "Running rename new-path case"
   test_rename_new_path_matches_as_added
   log "Running deleted file case"
-  test_deleted_file_does_not_match
+  test_deleted_file_matches
   log "Running GitHub API metadata case"
   test_github_api_metadata_strategy_supports_enterprise_pr_urls
   log "Running custom GitHub token env var case"
